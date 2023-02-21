@@ -1,0 +1,64 @@
+// GraphQL upload service, retired for a seperate traditional upload service "PostFile.go"
+
+package social
+
+import (
+	
+	"context"
+	"io/ioutil"
+	"time"
+	"errors"
+	"go.mongodb.org/mongo-driver/bson"
+	"github.com/99designs/gqlgen/graphql"
+	"github.com/andru100/Graphql-Social-Network/graph/model"
+)
+
+
+func PostFileGQLVersion(fileData graphql.Upload) (*model.MongoFields, error) { //type will be will be graphql upload type hopefully unmarshalled----- post file takes file from request form, runs upload func, puts in s3, returns s3 address.
+
+	filename := fileData.Filename
+
+	fileread, err := ioutil.ReadAll(fileData.File) // read the file to variable
+
+	userid := fileData.Username
+	requestType := "profPic"
+
+	collection := Client.Database("datingapp").Collection("userdata")
+
+	imgaddress := Uploaditem(&userid, &filename, &fileread) // call upload func returns uploaded img url
+
+	currentDoc := model.MongoFields{}
+
+	ctx, _ := context.WithTimeout(context.Background(), 15*time.Second)
+
+	// Find the document that mathes the id from the request.
+	err = collection.FindOne(ctx, bson.M{"Username": userid}).Decode(&currentDoc)
+	
+	//create filter
+	filter := bson.M{"Username": userid}
+	update := bson.D{}
+	if requestType == "profPic" {
+		currentDoc.Profpic = *imgaddress //replace url to profpic section of user object
+		update = bson.D{
+			{"$set", bson.D{
+				{"Profpic", currentDoc.Profpic},
+			}},
+		}
+	} else if requestType == "addPhotos" {
+		currentDoc.Photos = append(currentDoc.Photos, *imgaddress) //append to list of users photo urls
+		update = bson.D{
+			{"$set", bson.D{
+				{"Photos", currentDoc.Photos},
+			}},
+		}
+	}
+
+	//put to db
+	_, err = collection.UpdateOne(context.TODO(), filter, update)
+	if err != nil {
+		return nil, errors.New("error uploading media")
+	}
+
+	return &currentDoc, nil
+	
+}
